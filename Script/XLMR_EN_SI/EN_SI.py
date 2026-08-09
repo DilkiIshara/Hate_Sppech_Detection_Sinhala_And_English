@@ -1,38 +1,45 @@
 # ============================================================
-# XLM-R EN -> SI TRANSFER LEARNING
+# XLM-R EN -> SI
 # ============================================================
 #
-# PAPER-ALIGNED IMPLEMENTATION
+# YOUR EXPERIMENT
 #
-# Phase 1:
+# Stage 1:
+# DynamicallyGeneratedHateDataset
+#             ↓
 #       XLM-R-large
-#            ↓
-#       OLID English
 #
-# Phase 2:
-#       English-finetuned XLM-R-large
-#            ↓
-#       SOLD Sinhala TRAIN
+# Stage 2:
+# English-finetuned XLM-R-large
+#             ↓
+#        SOLD TRAIN
 #
-# Final evaluation:
-#       Final model
-#            ↓
-#       SOLD Sinhala TEST
+# Final:
+# English -> Sinhala XLM-R
+#             ↓
+#        SOLD TEST
 #
 #
-# IMPORTANT:
+# IMPORTANT
+# ------------------------------------------------------------
+# English dataset:
 #
-# OLID:
-#     text + label
-#
-# SOLD:
-#     text + label
+# USE:
+#   text
+#   label
 #
 # IGNORE:
-#     lang
-#     text_trans
+#   lang
+#   text_trans
 #
-# SOLD TEST IS NEVER USED FOR TRAINING.
+# SOLD:
+#
+# USE:
+#   text
+#   label
+#
+# SOLD TEST:
+#   NEVER used during training
 #
 # ============================================================
 
@@ -61,6 +68,8 @@ from transformers import (
     set_seed,
 )
 
+from sklearn.model_selection import train_test_split
+
 from sklearn.metrics import (
     accuracy_score,
     precision_recall_fscore_support,
@@ -86,32 +95,16 @@ MAX_LENGTH = 128
 # 3. DATASET PATHS
 # ============================================================
 
-# ------------------------------------------------------------
-# OLID
-#
-# Use the OLID Level-A training data.
-# ------------------------------------------------------------
-
-OLID_TRAIN_FILE = (
+ENGLISH_FILE = (
     "../../Data New/CombineDataSets/DynamicallyGeneratedHateDataset_translation.csv"
 )
-
-
-# ------------------------------------------------------------
-# SOLD
-#
-# IMPORTANT:
-#
-# sold_train = training only
-# sold_test  = testing only
-# ------------------------------------------------------------
 
 SOLD_TRAIN_FILE = (
     "../../Data New/CombineDataSets/sold_train_translation.csv"
 )
 
 SOLD_TEST_FILE = (
-    "../../Data New/RowData/sold_test.csv"
+    "../../Data New/RowData/SOLD_test.csv"
 )
 
 
@@ -119,16 +112,16 @@ SOLD_TEST_FILE = (
 # 4. OUTPUT DIRECTORIES
 # ============================================================
 
-OUTPUT_DIR = "OutPut/XLMR_EN_SI_PAPER"
+OUTPUT_DIR = "Output/XLMR_EN_SI_DGHD"
 
 PHASE1_DIR = os.path.join(
     OUTPUT_DIR,
-    "phase1_olid_xlmr_large"
+    "phase1_english"
 )
 
 PHASE2_DIR = os.path.join(
     OUTPUT_DIR,
-    "phase2_en_si_xlmr_large"
+    "phase2_en_si"
 )
 
 RESULTS_DIR = os.path.join(
@@ -170,7 +163,7 @@ if torch.cuda.is_available():
 
 
 # ============================================================
-# 6. DEVICE INFORMATION
+# 6. DEVICE
 # ============================================================
 
 print("=" * 80)
@@ -206,190 +199,16 @@ if torch.cuda.is_available():
 
 
 # ============================================================
-# 7. LOAD OLID
+# 7. LOAD ENGLISH DATASET
 # ============================================================
 
-def load_olid(
+def load_english_dataset(
     file_path
 ):
 
     print("\n")
     print("=" * 80)
-    print("LOADING OLID")
-    print("=" * 80)
-
-    # OLID is TSV
-    df = pd.read_csv(
-        file_path,
-        sep="\t"
-    )
-
-    print(
-        "Original shape:",
-        df.shape
-    )
-
-    print(
-        "Original columns:",
-        df.columns.tolist()
-    )
-
-    # --------------------------------------------------------
-    # OLID v1 normally contains:
-    #
-    # id
-    # tweet
-    # subtask_a
-    # subtask_b
-    # subtask_c
-    #
-    # We only need:
-    #
-    # tweet
-    # subtask_a
-    # --------------------------------------------------------
-
-    if "tweet" not in df.columns:
-
-        raise ValueError(
-            "OLID file does not contain "
-            "'tweet' column."
-        )
-
-    if "subtask_a" not in df.columns:
-
-        raise ValueError(
-            "OLID file does not contain "
-            "'subtask_a' column."
-        )
-
-    df = df[
-        [
-            "tweet",
-            "subtask_a"
-        ]
-    ].copy()
-
-    # --------------------------------------------------------
-    # Rename
-    # --------------------------------------------------------
-
-    df = df.rename(
-        columns={
-            "tweet": "text",
-            "subtask_a": "label"
-        }
-    )
-
-    # --------------------------------------------------------
-    # Map OLID labels
-    #
-    # OFF = 1
-    # NOT = 0
-    # --------------------------------------------------------
-
-    df["label"] = (
-        df["label"]
-        .astype(str)
-        .str.upper()
-        .map(
-            {
-                "OFF": 1,
-                "NOT": 0
-            }
-        )
-    )
-
-    # --------------------------------------------------------
-    # Remove invalid rows
-    # --------------------------------------------------------
-
-    df = df.dropna(
-        subset=[
-            "text",
-            "label"
-        ]
-    )
-
-    # --------------------------------------------------------
-    # Text
-    # --------------------------------------------------------
-
-    df["text"] = (
-        df["text"]
-        .astype(str)
-        .str.strip()
-    )
-
-    df = df[
-        df["text"].str.len() > 0
-    ]
-
-    # --------------------------------------------------------
-    # Label
-    # --------------------------------------------------------
-
-    df["label"] = (
-        df["label"]
-        .astype(int)
-    )
-
-    # --------------------------------------------------------
-    # Remove exact duplicates
-    # --------------------------------------------------------
-
-    before = len(df)
-
-    df = df.drop_duplicates(
-        subset=[
-            "text",
-            "label"
-        ]
-    )
-
-    print(
-        "Duplicates removed:",
-        before - len(df)
-    )
-
-    df = df.reset_index(
-        drop=True
-    )
-
-    print(
-        "Final OLID samples:",
-        len(df)
-    )
-
-    print(
-        "\nOLID label distribution:"
-    )
-
-    print(
-        df["label"]
-        .value_counts()
-        .sort_index()
-    )
-
-    return df
-
-
-# ============================================================
-# 8. LOAD SOLD
-# ============================================================
-
-def load_sold(
-    file_path,
-    split_name
-):
-
-    print("\n")
-    print("=" * 80)
-
-    print(
-        f"LOADING SOLD {split_name.upper()}"
-    )
-
+    print("LOADING ENGLISH DATASET")
     print("=" * 80)
 
     df = pd.read_csv(
@@ -402,37 +221,40 @@ def load_sold(
     )
 
     print(
-        "Original columns:",
+        "Columns:",
         df.columns.tolist()
     )
 
     # --------------------------------------------------------
-    # IMPORTANT
+    # YOUR DATASET:
     #
-    # We intentionally use ONLY:
+    # text
+    # label
+    # lang
+    # text_trans
+    #
+    # We ONLY use:
     #
     # text
     # label
     #
-    # Ignore:
-    #
-    # lang
-    # text_trans
+    # lang       -> ignored
+    # text_trans -> ignored
     # --------------------------------------------------------
 
-    if "text" not in df.columns:
+    required_columns = [
+        "text",
+        "label"
+    ]
 
-        raise ValueError(
-            "SOLD dataset does not contain "
-            "'text' column."
-        )
+    for column in required_columns:
 
-    if "label" not in df.columns:
+        if column not in df.columns:
 
-        raise ValueError(
-            "SOLD dataset does not contain "
-            "'label' column."
-        )
+            raise ValueError(
+                f"English dataset does not "
+                f"contain '{column}'"
+            )
 
     df = df[
         [
@@ -442,7 +264,7 @@ def load_sold(
     ].copy()
 
     # --------------------------------------------------------
-    # Missing values
+    # Remove missing values
     # --------------------------------------------------------
 
     df = df.dropna(
@@ -485,7 +307,7 @@ def load_sold(
     )
 
     # --------------------------------------------------------
-    # Binary labels
+    # Only binary classification
     # --------------------------------------------------------
 
     df = df[
@@ -495,7 +317,157 @@ def load_sold(
     ]
 
     # --------------------------------------------------------
-    # Duplicates
+    # Remove duplicates
+    # --------------------------------------------------------
+
+    before = len(df)
+
+    df = df.drop_duplicates(
+        subset=[
+            "text",
+            "label"
+        ]
+    )
+
+    print(
+        "Duplicates removed:",
+        before - len(df)
+    )
+
+    df = df.reset_index(
+        drop=True
+    )
+
+    # --------------------------------------------------------
+    # Statistics
+    # --------------------------------------------------------
+
+    print(
+        "Final English samples:",
+        len(df)
+    )
+
+    print(
+        "\nEnglish label distribution:"
+    )
+
+    print(
+        df["label"]
+        .value_counts()
+        .sort_index()
+    )
+
+    return df
+
+
+# ============================================================
+# 8. LOAD SOLD DATASET
+# ============================================================
+
+def load_sold_dataset(
+    file_path,
+    split_name
+):
+
+    print("\n")
+    print("=" * 80)
+
+    print(
+        f"LOADING SOLD {split_name.upper()}"
+    )
+
+    print("=" * 80)
+
+    df = pd.read_csv(
+        file_path
+    )
+
+    print(
+        "Original shape:",
+        df.shape
+    )
+
+    print(
+        "Columns:",
+        df.columns.tolist()
+    )
+
+    required_columns = [
+        "text",
+        "label"
+    ]
+
+    for column in required_columns:
+
+        if column not in df.columns:
+
+            raise ValueError(
+                f"SOLD {split_name} does not "
+                f"contain '{column}'"
+            )
+
+    # --------------------------------------------------------
+    # Only use text + label
+    # --------------------------------------------------------
+
+    df = df[
+        [
+            "text",
+            "label"
+        ]
+    ].copy()
+
+    # --------------------------------------------------------
+    # Remove missing
+    # --------------------------------------------------------
+
+    df = df.dropna(
+        subset=[
+            "text",
+            "label"
+        ]
+    )
+
+    # --------------------------------------------------------
+    # Text
+    # --------------------------------------------------------
+
+    df["text"] = (
+        df["text"]
+        .astype(str)
+        .str.strip()
+    )
+
+    df = df[
+        df["text"].str.len() > 0
+    ]
+
+    # --------------------------------------------------------
+    # Label
+    # --------------------------------------------------------
+
+    df["label"] = pd.to_numeric(
+        df["label"],
+        errors="coerce"
+    )
+
+    df = df.dropna(
+        subset=["label"]
+    )
+
+    df["label"] = (
+        df["label"]
+        .astype(int)
+    )
+
+    df = df[
+        df["label"].isin(
+            [0, 1]
+        )
+    ]
+
+    # --------------------------------------------------------
+    # Remove duplicates
     # --------------------------------------------------------
 
     before = len(df)
@@ -535,53 +507,46 @@ def load_sold(
 
 
 # ============================================================
-# 9. LOAD ALL DATA
+# 9. LOAD DATA
 # ============================================================
 
-olid_df = load_olid(
-    OLID_TRAIN_FILE
+english_df = load_english_dataset(
+    ENGLISH_FILE
 )
 
-sold_train_df = load_sold(
+sold_train_full_df = load_sold_dataset(
     SOLD_TRAIN_FILE,
     "train"
 )
 
-sold_test_df = load_sold(
+sold_test_df = load_sold_dataset(
     SOLD_TEST_FILE,
     "test"
 )
 
 
 # ============================================================
-# 10. DO NOT TOUCH SOLD TEST
+# 10. IMPORTANT DATA SEPARATION
 # ============================================================
 
 print("\n")
 print("=" * 80)
-
-print(
-    "IMPORTANT DATA SPLIT"
-)
-
+print("DATASET SEPARATION")
 print("=" * 80)
 
 print(
-    "OLID:",
-    len(olid_df),
-    "samples"
+    "\nEnglish source:",
+    len(english_df)
 )
 
 print(
     "SOLD train:",
-    len(sold_train_df),
-    "samples"
+    len(sold_train_full_df)
 )
 
 print(
     "SOLD test:",
-    len(sold_test_df),
-    "samples"
+    len(sold_test_df)
 )
 
 print(
@@ -591,28 +556,17 @@ print(
 
 
 # ============================================================
-# 11. CREATE OLID TRAIN / VALIDATION
-# ============================================================
-#
-# The paper uses a validation portion during training.
-#
-# We keep SOLD completely separate.
-#
+# 11. ENGLISH TRAIN / VALIDATION
 # ============================================================
 
-olid_train_df, olid_val_df = (
-    __import__(
-        "sklearn.model_selection",
-        fromlist=[
-            "train_test_split"
-        ]
-    ).train_test_split(
+english_train_df, english_val_df = (
+    train_test_split(
 
-        olid_df,
+        english_df,
 
         test_size=0.20,
 
-        stratify=olid_df["label"],
+        stratify=english_df["label"],
 
         random_state=SEED
     )
@@ -620,44 +574,38 @@ olid_train_df, olid_val_df = (
 
 
 # ============================================================
-# 12. CREATE SOLD VALIDATION FROM SOLD TRAIN
+# 12. SOLD TRAIN / VALIDATION
 # ============================================================
 #
-# SOLD TEST remains untouched.
+# IMPORTANT:
 #
-# We use a portion of SOLD TRAIN for validation
-# during Phase 2.
+# We split ONLY the SOLD TRAIN data.
+#
+# SOLD TEST remains untouched.
 #
 # ============================================================
 
 sold_train_df, sold_val_df = (
-    __import__(
-        "sklearn.model_selection",
-        fromlist=[
-            "train_test_split"
-        ]
-    ).train_test_split(
+    train_test_split(
 
-        sold_train_df,
+        sold_train_full_df,
 
         test_size=0.20,
 
-        stratify=sold_train_df["label"],
+        stratify=sold_train_full_df["label"],
 
         random_state=SEED
     )
 )
 
 
-# Reset indexes
-
-olid_train_df = (
-    olid_train_df
+english_train_df = (
+    english_train_df
     .reset_index(drop=True)
 )
 
-olid_val_df = (
-    olid_val_df
+english_val_df = (
+    english_val_df
     .reset_index(drop=True)
 )
 
@@ -678,26 +626,22 @@ sold_val_df = (
 
 print("\n")
 print("=" * 80)
-print("FINAL TRAINING SPLITS")
+print("TRAINING SPLITS")
 print("=" * 80)
 
-print(
-    "\nOLID:"
-)
+print("\nEnglish")
 
 print(
     "Train:",
-    len(olid_train_df)
+    len(english_train_df)
 )
 
 print(
     "Validation:",
-    len(olid_val_df)
+    len(english_val_df)
 )
 
-print(
-    "\nSOLD:"
-)
+print("\nSOLD")
 
 print(
     "Train:",
@@ -710,13 +654,13 @@ print(
 )
 
 print(
-    "Test:",
+    "Official Test:",
     len(sold_test_df)
 )
 
 
 # ============================================================
-# 14. CONVERT TO HUGGINGFACE DATASETS
+# 14. CONVERT TO HF DATASETS
 # ============================================================
 
 def to_hf_dataset(
@@ -736,12 +680,12 @@ def to_hf_dataset(
     )
 
 
-olid_train = to_hf_dataset(
-    olid_train_df
+english_train = to_hf_dataset(
+    english_train_df
 )
 
-olid_val = to_hf_dataset(
-    olid_val_df
+english_val = to_hf_dataset(
+    english_val_df
 )
 
 sold_train = to_hf_dataset(
@@ -763,9 +707,7 @@ sold_test = to_hf_dataset(
 
 print("\n")
 print("=" * 80)
-print(
-    "LOADING XLM-ROBERTA-LARGE"
-)
+print("LOADING XLM-RoBERTa-LARGE")
 print("=" * 80)
 
 tokenizer = (
@@ -794,16 +736,16 @@ def tokenize(
 
 
 print(
-    "\nTokenizing OLID..."
+    "\nTokenizing English..."
 )
 
-olid_train = olid_train.map(
+english_train = english_train.map(
     tokenize,
     batched=True,
     remove_columns=["text"]
 )
 
-olid_val = olid_val.map(
+english_val = english_val.map(
     tokenize,
     batched=True,
     remove_columns=["text"]
@@ -912,8 +854,8 @@ def compute_metrics(
 
 # ============================================================
 # ============================================================
-# PHASE 1
-# OLID -> XLM-R-LARGE
+# STAGE 1
+# ENGLISH DATASET -> XLM-R-LARGE
 # ============================================================
 # ============================================================
 
@@ -921,14 +863,14 @@ print("\n")
 print("=" * 80)
 
 print(
-    "PHASE 1: XLM-R-LARGE -> OLID"
+    "STAGE 1: ENGLISH FINE-TUNING"
 )
 
 print("=" * 80)
 
 
 # ------------------------------------------------------------
-# Load pretrained XLM-R-large
+# Load PRETRAINED XLM-R-large
 # ------------------------------------------------------------
 
 model_en = (
@@ -943,29 +885,23 @@ model_en = (
 
 
 # ============================================================
-# PAPER TRAINING SETTINGS
+# TRAINING SETTINGS
 # ============================================================
 #
-# Paper:
+# Paper-aligned:
 #
-# Model       = XLM-R-large
-# Batch size  = 16
-# LR          = 2e-5
-# Warmup      = 10%
-# Epochs      = 3
-# Early stop  = evaluation loss
+# Learning rate = 2e-5
+# Warmup = 10%
+# Epochs = 3
 #
-# ------------------------------------------------------------
-# HARDWARE ADAPTATION
+# Hardware:
 #
-# Your RTX 2050 has ~4 GB VRAM.
+# RTX 2050 4GB
 #
-# Therefore:
+# Per-device batch = 1
+# Accumulation = 16
 #
-# actual batch = 1
-# accumulation = 16
-#
-# effective batch = 16
+# Effective batch = 16
 #
 # ============================================================
 
@@ -1014,7 +950,7 @@ training_args_en = TrainingArguments(
 
 
 # ============================================================
-# PHASE 1 TRAINER
+# STAGE 1 TRAINER
 # ============================================================
 
 trainer_en = Trainer(
@@ -1023,9 +959,9 @@ trainer_en = Trainer(
 
     args=training_args_en,
 
-    train_dataset=olid_train,
+    train_dataset=english_train,
 
-    eval_dataset=olid_val,
+    eval_dataset=english_val,
 
     processing_class=tokenizer,
 
@@ -1042,40 +978,43 @@ trainer_en = Trainer(
 
 
 # ============================================================
-# TRAIN PHASE 1
+# TRAIN STAGE 1
 # ============================================================
 
 print(
-    "\nTraining XLM-R-large on OLID..."
+    "\nTraining XLM-R-large on "
+    "DynamicallyGeneratedHateDataset..."
 )
 
 trainer_en.train()
 
 
 # ============================================================
-# PHASE 1 VALIDATION
+# STAGE 1 VALIDATION
 # ============================================================
 
 print("\n")
 print("=" * 80)
 
 print(
-    "PHASE 1 OLID VALIDATION"
+    "STAGE 1 ENGLISH VALIDATION"
 )
 
 print("=" * 80)
 
-olid_results = trainer_en.evaluate(
-    olid_val
+english_results = (
+    trainer_en.evaluate(
+        english_val
+    )
 )
 
 print(
-    olid_results
+    english_results
 )
 
 
 # ============================================================
-# SAVE PHASE 1 MODEL
+# SAVE STAGE 1
 # ============================================================
 
 trainer_en.save_model(
@@ -1088,7 +1027,7 @@ tokenizer.save_pretrained(
 
 
 print(
-    "\nPhase 1 model saved to:"
+    "\nEnglish-finetuned model saved:"
 )
 
 print(
@@ -1098,8 +1037,8 @@ print(
 
 # ============================================================
 # ============================================================
-# PHASE 2
-# OLID MODEL -> SOLD
+# STAGE 2
+# ENGLISH MODEL -> SOLD
 # ============================================================
 # ============================================================
 
@@ -1107,18 +1046,22 @@ print("\n")
 print("=" * 80)
 
 print(
-    "PHASE 2: XLM-R ENGLISH -> SOLD SINHALA"
+    "STAGE 2: ENGLISH -> SINHALA"
 )
 
 print("=" * 80)
 
 
 # ------------------------------------------------------------
-# CRITICAL STEP
+# CRITICAL:
 #
-# Load Phase 1 weights.
+# LOAD STAGE 1 MODEL
 #
-# DO NOT start from xlm-roberta-large again.
+# NOT:
+#
+# AutoModelForSequenceClassification
+# .from_pretrained("xlm-roberta-large")
+#
 # ------------------------------------------------------------
 
 model_en_si = (
@@ -1133,7 +1076,7 @@ model_en_si = (
 
 
 # ============================================================
-# PHASE 2 TRAINING
+# STAGE 2 SETTINGS
 # ============================================================
 
 training_args_si = TrainingArguments(
@@ -1181,7 +1124,7 @@ training_args_si = TrainingArguments(
 
 
 # ============================================================
-# PHASE 2 TRAINER
+# STAGE 2 TRAINER
 # ============================================================
 
 trainer_en_si = Trainer(
@@ -1209,11 +1152,12 @@ trainer_en_si = Trainer(
 
 
 # ============================================================
-# TRAIN PHASE 2
+# TRAIN STAGE 2
 # ============================================================
 
 print(
-    "\nTraining transferred model on SOLD..."
+    "\nTraining English-finetuned "
+    "XLM-R-large on SOLD..."
 )
 
 trainer_en_si.train()
@@ -1233,7 +1177,7 @@ tokenizer.save_pretrained(
 
 
 print(
-    "\nFinal EN -> SI model saved to:"
+    "\nFinal XLM-R EN -> SI model saved:"
 )
 
 print(
@@ -1244,7 +1188,7 @@ print(
 # ============================================================
 # ============================================================
 # FINAL EVALUATION
-# SOLD TEST ONLY
+# SOLD TEST
 # ============================================================
 # ============================================================
 
@@ -1252,21 +1196,20 @@ print("\n")
 print("=" * 80)
 
 print(
-    "FINAL EVALUATION ON OFFICIAL SOLD TEST SET"
+    "FINAL EVALUATION ON SOLD TEST"
 )
 
 print("=" * 80)
 
 
 # ------------------------------------------------------------
-# IMPORTANT:
+# SOLD TEST HAS NOT BEEN USED DURING:
 #
-# sold_test has NEVER been used for:
-#
-# - training
-# - model selection
-# - early stopping
-# - hyperparameter tuning
+# - Stage 1 training
+# - Stage 1 validation
+# - Stage 2 training
+# - Stage 2 validation
+# - Early stopping
 #
 # ------------------------------------------------------------
 
@@ -1291,18 +1234,8 @@ print(
 
 
 # ============================================================
-# 19. DETAILED CLASSIFICATION REPORT
+# 19. PREDICTIONS
 # ============================================================
-
-print("\n")
-print("=" * 80)
-
-print(
-    "SOLD TEST CLASSIFICATION REPORT"
-)
-
-print("=" * 80)
-
 
 predictions = (
     trainer_en_si.predict(
@@ -1320,6 +1253,19 @@ y_pred = np.argmax(
 )
 
 
+# ============================================================
+# 20. CLASSIFICATION REPORT
+# ============================================================
+
+print("\n")
+print("=" * 80)
+
+print(
+    "SOLD TEST CLASSIFICATION REPORT"
+)
+
+print("=" * 80)
+
 report = classification_report(
 
     y_true,
@@ -1336,21 +1282,19 @@ report = classification_report(
     zero_division=0
 )
 
-
 print(
     report
 )
 
 
 # ============================================================
-# 20. CONFUSION MATRIX
+# 21. CONFUSION MATRIX
 # ============================================================
 
 cm = confusion_matrix(
     y_true,
     y_pred
 )
-
 
 print(
     "\nConfusion Matrix:"
@@ -1362,28 +1306,34 @@ print(
 
 
 # ============================================================
-# 21. SAVE RESULTS
+# 22. SAVE RESULTS
 # ============================================================
 
 results = {
 
     "experiment":
-        "XLM-R EN -> SI",
+        "DynamicallyGeneratedHateDataset -> SOLD",
 
     "model":
         MODEL_NAME,
 
     "source_dataset":
-        "OLID Level A",
+        "DynamicallyGeneratedHateDataset",
 
     "target_dataset":
         "SOLD",
 
     "phase_1":
-        "OLID English",
+        "English",
 
     "phase_2":
-        "SOLD Sinhala",
+        "Sinhala",
+
+    "english_samples":
+        len(english_df),
+
+    "sold_train_samples":
+        len(sold_train_full_df),
 
     "sold_test_samples":
         len(sold_test_df),
@@ -1439,40 +1389,63 @@ with open(
 
 
 # ============================================================
-# 22. FINAL SUMMARY
+# 23. FINAL SUMMARY
 # ============================================================
 
 print("\n")
 print("=" * 80)
 
 print(
-    "EXPERIMENT COMPLETED"
+    "XLM-R EN -> SI COMPLETED"
 )
 
 print("=" * 80)
 
 print(
-    "\nModel:",
+    "\nSource:"
+)
+
+print(
+    "DynamicallyGeneratedHateDataset"
+)
+
+print(
+    "\nStage 1:"
+)
+
+print(
+    "English fine-tuning"
+)
+
+print(
+    "\nStage 2:"
+)
+
+print(
+    "Sinhala SOLD fine-tuning"
+)
+
+print(
+    "\nFinal evaluation:"
+)
+
+print(
+    "Official SOLD test set"
+)
+
+print(
+    "\nModel:"
+)
+
+print(
     MODEL_NAME
 )
 
 print(
-    "Phase 1:",
-    "OLID English"
+    "\nSOLD Test Macro-F1:"
 )
 
 print(
-    "Phase 2:",
-    "SOLD Sinhala"
-)
-
-print(
-    "Final evaluation:",
-    "Official SOLD Test"
-)
-
-print(
-    "\nSOLD Test Macro-F1:",
     round(
         sold_test_results[
             "eval_macro_f1"
@@ -1482,7 +1455,10 @@ print(
 )
 
 print(
-    "\nSOLD Test Weighted-F1:",
+    "\nSOLD Test Weighted-F1:"
+)
+
+print(
     round(
         sold_test_results[
             "eval_weighted_f1"
@@ -1492,7 +1468,10 @@ print(
 )
 
 print(
-    "\nSOLD Test Accuracy:",
+    "\nSOLD Test Accuracy:"
+)
+
+print(
     round(
         sold_test_results[
             "eval_accuracy"
@@ -1517,8 +1496,6 @@ print(
     results_file
 )
 
-print("\n")
-
 print(
-    "XLM-R EN -> SI FINISHED."
+    "\nXLM-R EN -> SI FINISHED."
 )
